@@ -25,6 +25,7 @@ import android.util.Log;
 import android.view.Menu;
 import android.view.MenuInflater;
 import android.view.MenuItem;
+import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 import android.view.TextureView;
 import android.view.View;
@@ -38,7 +39,7 @@ import java.util.Date;
 import java.util.List;
 import java.util.regex.Pattern;
 
-public class MainActivity extends Activity implements TextureView.SurfaceTextureListener, Camera.PreviewCallback, Camera.AutoFocusCallback {
+public class MainActivity extends Activity implements Camera.PreviewCallback, Camera.AutoFocusCallback {
 
     final static String PREFERENCES_NAME = "preferences";
     final static String MAGNITUDE_SENSOR_VALUE = "MagnitudeSensorValue";
@@ -147,6 +148,10 @@ public class MainActivity extends Activity implements TextureView.SurfaceTexture
             return null;
         }
         fpsValue = params.getSupportedPreviewFpsRange();
+
+        if (fpsValue == null) {
+            return null;
+        }
 
         int minFps = 0;
         int pos = 0;
@@ -508,10 +513,47 @@ public class MainActivity extends Activity implements TextureView.SurfaceTexture
                 openCamera();
             }
             // fix texture listener
-            if (previewTexture.getSurfaceTextureListener() != this) {
-                previewTexture.setSurfaceTextureListener(this);
-            }
+            previewTexture.setSurfaceTextureListener(new TextureView.SurfaceTextureListener() {
+                @Override
+                public void onSurfaceTextureAvailable(SurfaceTexture surfaceTexture, int i, int i1) {
+                    openCamera();
+                }
+
+                @Override
+                public void onSurfaceTextureSizeChanged(SurfaceTexture surfaceTexture, int i, int i1) {
+
+                }
+
+                @Override
+                public boolean onSurfaceTextureDestroyed(SurfaceTexture surfaceTexture) {
+                    deleteCamera();
+                    return true;
+                }
+
+                @Override
+                public void onSurfaceTextureUpdated(SurfaceTexture surfaceTexture) {
+
+                }
+            });
+        } else {
+            previewSurface.getHolder().addCallback(new SurfaceHolder.Callback() {
+                @Override
+                public void surfaceCreated(SurfaceHolder surfaceHolder) {
+                    openCamera();
+                }
+
+                @Override
+                public void surfaceChanged(SurfaceHolder surfaceHolder, int i, int i1, int i2) {
+
+                }
+
+                @Override
+                public void surfaceDestroyed(SurfaceHolder surfaceHolder) {
+                    deleteCamera();
+                }
+            });
         }
+        openCamera();
     }
 
     @Override
@@ -727,28 +769,35 @@ public class MainActivity extends Activity implements TextureView.SurfaceTexture
                 stateText += (int) (time_left / (3600 * 24)) + " " + getString(R.string.days) + ".\n";
             }
         } else {
+            View.OnClickListener clickCallback = new View.OnClickListener() {
+                @Override
+                public void onClick(View view) {
+                    Date current = new Date();
+                    activeTimeLeftBase = current.getTime() / 1000;
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.ICE_CREAM_SANDWICH) {
+                        previewTexture.setOnClickListener(null);
+                    } else {
+                        previewSurface.setOnClickListener(null);
+                    }
+
+                    if (!dontUseCamera) {
+                        initCamera(useMonoPreview);
+                        recreatePreview();
+                    }
+
+                    // restore light sensor
+                    initLightSensor();
+                }
+            };
             stateText += getString(R.string.preview_stopped_some_time) + "\n";
             // disable camera sensor
             deleteCamera();
             // disable lights sensor
             destroyLightSensor();
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.ICE_CREAM_SANDWICH) {
-                previewTexture.setOnClickListener(new View.OnClickListener() {
-                    @Override
-                    public void onClick(View view) {
-                        Date current = new Date();
-                        activeTimeLeftBase = current.getTime() / 1000;
-                        previewTexture.setOnClickListener(null);
-
-                        if (!dontUseCamera) {
-                            initCamera(useMonoPreview);
-                            recreatePreview();
-                        }
-
-                        // restore light sensor
-                        initLightSensor();
-                    }
-                });
+                previewTexture.setOnClickListener(clickCallback);
+            } else {
+                previewSurface.setOnClickListener(clickCallback);
             }
         }
         stateText += getString(R.string.license_text) + "\n";
@@ -919,6 +968,8 @@ public class MainActivity extends Activity implements TextureView.SurfaceTexture
             try {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.ICE_CREAM_SANDWICH) {
                     camera.setPreviewTexture(previewTexture.getSurfaceTexture());
+                } else {
+                    camera.setPreviewDisplay(previewSurface.getHolder());
                 }
                 camera.setPreviewCallback(this);
 
@@ -942,15 +993,22 @@ public class MainActivity extends Activity implements TextureView.SurfaceTexture
                 if (this.getResources().getConfiguration().orientation != Configuration.ORIENTATION_LANDSCAPE) {
                     // portrait
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.FROYO) {
-                        camera.setDisplayOrientation(90);
+                        try {
+                            camera.setDisplayOrientation(90);
+                        } catch (Exception e) {
+                            Log.e(EVENTS_NAME, "Cannot set display orientation:" + e.toString());
+                        }
                     }
                     lp.height = previewSurfaceHeight;
                     lp.width = (int) (previewSurfaceHeight / aspect);
-
                 } else {
                     // landscape
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.FROYO) {
-                        camera.setDisplayOrientation(0);
+                        try {
+                            camera.setDisplayOrientation(0);
+                        } catch (Exception e) {
+                            Log.e(EVENTS_NAME, "Cannot set display orientation:" + e.toString());
+                        }
                     }
                     lp.width = previewSurfaceWidth;
                     lp.height = (int) (previewSurfaceWidth / aspect);
@@ -965,27 +1023,6 @@ public class MainActivity extends Activity implements TextureView.SurfaceTexture
                 Log.e(EVENTS_NAME, "Cannot access system brightness:" + e.toString());
             }
         }
-    }
-
-    @Override
-    public void onSurfaceTextureAvailable(SurfaceTexture surfaceTexture, int i, int i1) {
-        openCamera();
-    }
-
-    @Override
-    public void onSurfaceTextureSizeChanged(SurfaceTexture surfaceTexture, int i, int i1) {
-
-    }
-
-    @Override
-    public boolean onSurfaceTextureDestroyed(SurfaceTexture surfaceTexture) {
-        deleteCamera();
-        return true;
-    }
-
-    @Override
-    public void onSurfaceTextureUpdated(SurfaceTexture surfaceTexture) {
-
     }
 
     private float getMagnitude() {
